@@ -87,9 +87,9 @@ df.air_vst <- lst.data[["air_vst"]] %>%
   dplyr::filter(air_store_id != "air_decoy") %>% 
   dplyr::group_by(air_store_id) %>% 
   tidyr::fill(mean_vst_lastmonth, med_vst_lastmonth, cnt_vst_lastmonth, 
-              p05_vst_lastmonth, p95_vst_lastmonth, sd_log_vst_lastmonth) %>% 
-  tidyr::fill(mean_vst_lastmonth, med_vst_lastmonth, cnt_vst_lastmonth, 
               p05_vst_lastmonth, p95_vst_lastmonth, sd_log_vst_lastmonth, .direction = "up") %>% 
+  tidyr::fill(mean_vst_lastmonth, med_vst_lastmonth, cnt_vst_lastmonth, 
+              p05_vst_lastmonth, p95_vst_lastmonth, sd_log_vst_lastmonth) %>% 
   dplyr::ungroup() %>% 
   dplyr::mutate(cnt_vst_lastmonth = ifelse((year == 2017) & (month == 4), 
                                            yes = cnt_vst_lastmonth * 30 / 22, 
