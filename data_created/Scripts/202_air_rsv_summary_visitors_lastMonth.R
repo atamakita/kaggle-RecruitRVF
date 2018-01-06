@@ -5,7 +5,8 @@
 library(magrittr)
 library(lubridate)
 
-CUTOFF_ALL <- 10 # 予約件数がこれ以下のサンプルは削除
+CUTOFF_ALL <- 10 # 全期間での予約件数がこれ以下のサンプルは削除
+CUTOFF_MTH <- 3  # 月別の予約件数がこれ以下の月は削除
 
 # ディレクトリ --------------------------------------------------------------------
 setwd("/Users/shunsukeakita/Park/RecruitRVF/data_created/")
@@ -25,7 +26,7 @@ data.train <- temp$train %>% dplyr::select(air_store_id, visit_date, wday_vst, m
 data.test <- temp$test %>% dplyr::select(air_store_id, visit_date, wday_vst, month_vst)
 
 # air_rsv --------------------------------------------------------------------
-# 全期間の平均値, 中央値, 件数
+# 全期間の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
 df.air_rsv <- lst.data[["air_rsv"]] %>% 
   dplyr::mutate(visit_date = date(visit_datetime)) %>% 
   dplyr::group_by(air_store_id, visit_date) %>% 
@@ -34,6 +35,9 @@ df.air_rsv <- lst.data[["air_rsv"]] %>%
   dplyr::group_by(air_store_id) %>% 
   dplyr::summarise(mean_air_rsv_all = mean(visitors, na.rm=T), 
                    med_air_rsv_all = median(visitors, na.rm=T), 
+                   p05_air_rsv_all = quantile(visitors, p = 0.05, na.rm = T) %>% as.vector, 
+                   p95_air_rsv_all = quantile(visitors, p = 0.95, na.rm = T) %>% as.vector, 
+                   sd_log_air_rsv_all = log(1 + visitors) %>% sd(na.rm = T), 
                    cnt_air_rsv_all = length(visitors)) %>% 
   dplyr::ungroup() %>% 
   dplyr::filter(cnt_air_rsv_all >= CUTOFF_ALL)
@@ -41,7 +45,7 @@ df.air_rsv <- lst.data[["air_rsv"]] %>%
 data.train %<>% dplyr::left_join(., df.air_rsv, by = "air_store_id")
 data.test %<>% dplyr::left_join(., df.air_rsv, by = "air_store_id")
 
-# 1ヶ月間の最大値, 最小値, 平均値, 中央値
+# 1ヶ月間の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
 # たとえば、5月のレコードには4月の集計値が結びつく
 df.air_rsv <- lst.data[["air_rsv"]] %>% 
   rbind(tibble::data_frame(air_store_id = "air_decoy",
@@ -49,23 +53,35 @@ df.air_rsv <- lst.data[["air_rsv"]] %>%
                            reserve_datetime = ymd_hms("2015-12-31 19:00:00"), 
                            reserve_visitors = as.integer(0)), .) %>%
   dplyr::mutate(visit_date = date(visit_datetime)) %>% 
+  dplyr::group_by(air_store_id, visit_date) %>% 
+  dplyr::summarise(visitors = sum(reserve_visitors, na.rm = T)) %>% 
+  dplyr::ungroup() %>% 
   dplyr::mutate(year = year(visit_date), month = month(visit_date)) %>% 
   dplyr::group_by(air_store_id, year, month) %>% 
-  dplyr::summarise(max_air_rsv_lastmonth = max(reserve_visitors, na.rm=T), 
-                   min_air_rsv_lastmonth = min(reserve_visitors, na.rm=T),
-                   mean_air_rsv_lastmonth = mean(reserve_visitors, na.rm=T), 
-                   med_air_rsv_lastmonth = median(reserve_visitors, na.rm=T), 
-                   cnt_air_rsv_lastmonth = length(reserve_visitors)) %>% 
-  dplyr::ungroup() %>% 
+  dplyr::summarise(mean_air_rsv_lastmonth = mean(visitors, na.rm=T), 
+                   med_air_rsv_lastmonth = median(visitors, na.rm=T), 
+                   p05_air_rsv_lastmonth = quantile(visitors, p = 0.05, na.rm = T) %>% as.vector, 
+                   p95_air_rsv_lastmonth = quantile(visitors, p = 0.95, na.rm = T) %>% as.vector, 
+                   sd_log_air_rsv_lastmonth = log(1 + visitors) %>% sd(na.rm = T),
+                   cnt_air_rsv_lastmonth = length(visitors)) %>% 
+  dplyr::ungroup() %>%
+  dplyr::mutate(eraseflg = (year == 2016) & (month == 10)) %>%
+  dplyr::mutate(mean_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = mean_air_rsv_lastmonth), 
+                med_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = med_air_rsv_lastmonth), 
+                p05_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = p05_air_rsv_lastmonth), 
+                p95_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = p95_air_rsv_lastmonth), 
+                sd_log_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = sd_log_air_rsv_lastmonth), 
+                cnt_air_rsv_lastmonth = ifelse(eraseflg, yes = NA, no = cnt_air_rsv_lastmonth)) %>% 
+  dplyr::select(-eraseflg) %>% 
   tidyr::complete(air_store_id, year, month) %>% 
   dplyr::filter(!((year == 2017) & (month %in% c(5:12)))) %>% 
   dplyr::filter(!((year == 2015) & (month %in% c(1:11)))) %>% 
   dplyr::filter(air_store_id != "air_decoy") %>% 
   dplyr::group_by(air_store_id) %>% 
-  tidyr::fill(max_air_rsv_lastmonth, min_air_rsv_lastmonth, mean_air_rsv_lastmonth, 
-              med_air_rsv_lastmonth, cnt_air_rsv_lastmonth) %>% 
-  tidyr::fill(max_air_rsv_lastmonth, min_air_rsv_lastmonth, mean_air_rsv_lastmonth, 
-              med_air_rsv_lastmonth, cnt_air_rsv_lastmonth, .direction = "up") %>% 
+  tidyr::fill(mean_air_rsv_lastmonth, med_air_rsv_lastmonth, cnt_air_rsv_lastmonth, 
+              p05_air_rsv_lastmonth, p95_air_rsv_lastmonth, sd_log_air_rsv_lastmonth, .direction = "up") %>% 
+  tidyr::fill(mean_air_rsv_lastmonth, med_air_rsv_lastmonth, cnt_air_rsv_lastmonth, 
+              p05_air_rsv_lastmonth, p95_air_rsv_lastmonth, sd_log_air_rsv_lastmonth) %>% 
   dplyr::ungroup()
 
 # マージ用のキーを作成
@@ -83,6 +99,39 @@ data.test %<>% dplyr::mutate(key = floor_date(visit_date, "month")) %>%
   dplyr::left_join(., df.air_rsv, by = c("air_store_id", "key")) %>% 
   dplyr::select(-key, -wday_vst, -month_vst)
 
+
+# 曜日別の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
+# 標準偏差はサンプル数的に怪しいかもしれない
+df.air_rsv <- lst.data[["air_rsv"]] %>% 
+  dplyr::mutate(visit_date = date(visit_datetime)) %>% 
+  dplyr::group_by(air_store_id, visit_date) %>% 
+  dplyr::summarise(visitors = sum(reserve_visitors, na.rm = T)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(wday = wday(visit_date, label = T, abbr = F)) %>%
+  dplyr::group_by(air_store_id, wday) %>%
+  dplyr::summarise(mean_air_rsv_wday = mean(visitors, na.rm=T), 
+                   med_air_rsv_wday = median(visitors, na.rm=T), 
+                   p05_air_rsv_wday = quantile(visitors, p = 0.05, na.rm = T) %>% as.vector, 
+                   p95_air_rsv_wday = quantile(visitors, p = 0.95, na.rm = T) %>% as.vector, 
+                   sd_log_air_rsv_wday = log(1 + visitors) %>% sd(na.rm = T), 
+                   cnt_air_rsv_wday = length(visitors)) %>% 
+  dplyr::ungroup() %>% 
+  tidyr::complete(air_store_id, wday) %>% 
+  dplyr::group_by(air_store_id) %>% 
+  dplyr::mutate(mean_air_rsv_wday = mean_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                med_air_rsv_wday = med_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                p05_air_rsv_wday = p05_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                p95_air_rsv_wday = p95_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                sd_log_air_rsv_wday = sd_log_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cnt_air_rsv_wday = cnt_air_rsv_wday %>% ifelse(is.na(.), yes = median(., na.rm = T), no = .)) %>% 
+  dplyr::ungroup()
+
+data.train %<>% dplyr::mutate(wday = wday(visit_date, label = T, abbr = F)) %>%
+  dplyr::left_join(., df.air_rsv, by = c("air_store_id", "wday")) %>% 
+  dplyr::select(-wday)
+data.test %<>% dplyr::mutate(wday = wday(visit_date, label = T, abbr = F)) %>%
+  dplyr::left_join(., df.air_rsv, by = c("air_store_id", "wday")) %>% 
+  dplyr::select(-wday)
 
 # 出力 --------------------------------------------------------------------
 # サンプル数が変化していないか
