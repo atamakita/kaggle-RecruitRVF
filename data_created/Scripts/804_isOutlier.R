@@ -6,7 +6,7 @@ library(magrittr)
 library(lubridate)
 
 
-CRITERION <- 0.97 # これ以上のパーセンタイル点は外れ値とする
+CRITERION <- 0.99 # これ以上のパーセンタイル点は外れ値とする
 
 
 # ディレクトリ --------------------------------------------------------------------
@@ -36,9 +36,14 @@ df.air_vst <- lst.data[["air_vst"]] %>%
 if (F) {
   ids <- df.air_vst %$% unique(air_store_id)
   df.air_vst %>% 
-    dplyr::filter(air_store_id == ids[29]) %>% 
+    dplyr::filter(air_store_id == ids[49]) %>% 
     ggplot(., aes(x = visit_date, y = visitors, colour = isOutlier)) + 
     geom_point()
+  
+  df.air_vst %>% 
+    dplyr::filter(air_store_id == ids[49]) %>% 
+    ggplot(., aes(x = visitors, y = ..density..)) + 
+    geom_histogram(bins = 30)
 }
 
 data.train %<>% 
