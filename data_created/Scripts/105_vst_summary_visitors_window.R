@@ -7,6 +7,7 @@ library(magrittr)
 library(lubridate)
 library(RcppRoll)
 library(glue)
+library(zoo)
 
 
 
@@ -60,25 +61,29 @@ df.master_df <- df.term_ids %>%
   split(., .$air_store_id) %>% 
   purrr::map(~ makedummydf(.x)) %>% 
   purrr::reduce(rbind) %>% 
-  dplyr::left_join(., lst.data[["air_vst"]], by = c("air_store_id", "visit_date"))
+  dplyr::left_join(., lst.data[["air_vst"]], by = c("air_store_id", "visit_date")) %>% 
+  dplyr::group_by(air_store_id) %>% 
+  dplyr::mutate(visitors_yesterday = visitors %>% dplyr::lag(n = 1), 
+                visitors_lastweek  = visitors %>% dplyr::lag(n = 7)) %>% 
+  dplyr::ungroup()
 
 ## visitors関連
 # 過去365日間の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
 df.air_vst <- 
   df.master_df %>% 
   dplyr::group_by(air_store_id) %>% 
-  dplyr::mutate(cummean_vst_365 = roll_meanr(x = visitors, n = 365, na.rm = T), 
-                cummed_vst_365 = rollapplyr(visitors, width = 365, 
+  dplyr::mutate(cummean_vst_365 = roll_meanr(x = visitors_yesterday, n = 365, na.rm = T), 
+                cummed_vst_365 = rollapplyr(visitors_yesterday, width = 365, 
                                             FUN = "quantile", p = 0.5, na.rm = T) %>% 
                   append(rep(NA, 364), .),
-                cump05_vst_365 = rollapplyr(visitors, width = 365, 
+                cump05_vst_365 = rollapplyr(visitors_yesterday, width = 365, 
                                             FUN = "quantile", p = 0.05, na.rm = T) %>% 
                   append(rep(NA, 364), .),
-                cump95_vst_365 = rollapplyr(visitors, width = 365, 
+                cump95_vst_365 = rollapplyr(visitors_yesterday, width = 365, 
                                             FUN = "quantile", p = 0.95, na.rm = T) %>% 
                   append(rep(NA, 364), .),
-                cumsd_log_vst_365 = visitors %>% log1p %>% roll_sdr(n = 365, na.rm = T), 
-                cumcnt_vst_365 = is.na(visitors) %>% not %>% 
+                cumsd_log_vst_365 = visitors_yesterday %>% log1p %>% roll_sdr(n = 365, na.rm = T), 
+                cumcnt_vst_365 = is.na(visitors_yesterday) %>% not %>% 
                   rollapplyr(., width = 365, FUN = "sum", na.rm = T) %>% 
                   append(rep(NA, 364), .)) %>%
   dplyr::ungroup() %>% 
@@ -95,7 +100,7 @@ df.air_vst <-
                   ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
                 cumcnt_vst_365 = cumcnt_vst_365 %>% ifelse(is.na(.), yes = -1, no = .)) %>% 
   dplyr::ungroup() %>% 
-  dplyr::select(-visitors)
+  dplyr::select(-visitors, -visitors_yesterday, -visitors_lastweek)
 
 if (F) {
   df.air_vst %>% tidyr::gather(key = nm, value = value, 
@@ -118,18 +123,18 @@ data.test %>% dim
 df.air_vst <- 
   df.master_df %>% 
   dplyr::group_by(air_store_id) %>% 
-  dplyr::mutate(cummean_vst_60 = roll_meanr(x = visitors, n = 60, na.rm = T), 
-                cummed_vst_60 = rollapplyr(visitors, width = 60, 
+  dplyr::mutate(cummean_vst_60 = roll_meanr(x = visitors_yesterday, n = 60, na.rm = T), 
+                cummed_vst_60 = rollapplyr(visitors_yesterday, width = 60, 
                                             FUN = "quantile", p = 0.5, na.rm = T) %>% 
                   append(rep(NA, 59), .),
-                cump05_vst_60 = rollapplyr(visitors, width = 60, 
+                cump05_vst_60 = rollapplyr(visitors_yesterday, width = 60, 
                                             FUN = "quantile", p = 0.05, na.rm = T) %>% 
                   append(rep(NA, 59), .),
-                cump95_vst_60 = rollapplyr(visitors, width = 60, 
+                cump95_vst_60 = rollapplyr(visitors_yesterday, width = 60, 
                                             FUN = "quantile", p = 0.95, na.rm = T) %>% 
                   append(rep(NA, 59), .),
-                cumsd_log_vst_60 = visitors %>% log1p %>% roll_sdr(n = 60, na.rm = T), 
-                cumcnt_vst_60 = is.na(visitors) %>% not %>% 
+                cumsd_log_vst_60 = visitors_yesterday %>% log1p %>% roll_sdr(n = 60, na.rm = T), 
+                cumcnt_vst_60 = is.na(visitors_yesterday) %>% not %>% 
                   rollapplyr(., width = 60, FUN = "sum", na.rm = T) %>% 
                   append(rep(NA, 59), .)) %>% 
   dplyr::ungroup() %>% 
@@ -146,7 +151,49 @@ df.air_vst <-
                   ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
                 cumcnt_vst_60 = cumcnt_vst_60 %>% ifelse(is.na(.), yes = -1, no = .)) %>% 
   dplyr::ungroup() %>% 
-  dplyr::select(-visitors)
+  dplyr::select(-visitors, -visitors_yesterday, -visitors_lastweek)
+
+data.train %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
+data.test %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
+
+data.train %>% dim
+data.test %>% dim
+
+
+
+# 過去30日間の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
+df.air_vst <- 
+  df.master_df %>% 
+  dplyr::group_by(air_store_id) %>% 
+  dplyr::mutate(cummean_vst_30 = roll_meanr(x = visitors_yesterday, n = 30, na.rm = T), 
+                cummed_vst_30 = rollapplyr(visitors_yesterday, width = 30, 
+                                           FUN = "quantile", p = 0.5, na.rm = T) %>% 
+                  append(rep(NA, 29), .),
+                cump05_vst_30 = rollapplyr(visitors_yesterday, width = 30, 
+                                           FUN = "quantile", p = 0.05, na.rm = T) %>% 
+                  append(rep(NA, 29), .),
+                cump95_vst_30 = rollapplyr(visitors_yesterday, width = 30, 
+                                           FUN = "quantile", p = 0.95, na.rm = T) %>% 
+                  append(rep(NA, 29), .),
+                cumsd_log_vst_30 = visitors_yesterday %>% log1p %>% roll_sdr(n = 30, na.rm = T), 
+                cumcnt_vst_30 = is.na(visitors_yesterday) %>% not %>% 
+                  rollapplyr(., width = 30, FUN = "sum", na.rm = T) %>% 
+                  append(rep(NA, 29), .)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(air_store_id) %>% 
+  dplyr::mutate(cummean_vst_30 = cummean_vst_30 %>% 
+                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cummed_vst_30 = cummed_vst_30 %>% 
+                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cump05_vst_30 = cump05_vst_30 %>% 
+                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cump95_vst_30 = cump95_vst_30 %>% 
+                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cumsd_log_vst_30 = cumsd_log_vst_30 %>% 
+                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
+                cumcnt_vst_30 = cumcnt_vst_30 %>% ifelse(is.na(.), yes = -1, no = .)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-visitors, -visitors_yesterday, -visitors_lastweek)
 
 data.train %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
 data.test %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
@@ -163,18 +210,18 @@ df.air_vst <-
   dplyr::mutate(wday = wday(visit_date, label = T, abbr = F)) %>%
   # dplyr::filter(air_store_id == "air_00a91d42b08b08d9") %>% 
   dplyr::group_by(air_store_id, wday) %>%
-  dplyr::mutate(cummean_vst_wday24 = roll_meanr(x = visitors, n = 24, na.rm = T), 
-                cummed_vst_wday24 = rollapplyr(visitors, width = 24, 
+  dplyr::mutate(cummean_vst_wday24 = roll_meanr(x = visitors_lastweek, n = 24, na.rm = T), 
+                cummed_vst_wday24 = rollapplyr(visitors_lastweek, width = 24, 
                                            FUN = "quantile", p = 0.5, na.rm = T) %>% 
                   append(rep(NA, 23), .),
-                cump05_vst_wday24 = rollapplyr(visitors, width = 24, 
+                cump05_vst_wday24 = rollapplyr(visitors_lastweek, width = 24, 
                                            FUN = "quantile", p = 0.05, na.rm = T) %>% 
                   append(rep(NA, 23), .),
-                cump95_vst_wday24 = rollapplyr(visitors, width = 24, 
+                cump95_vst_wday24 = rollapplyr(visitors_lastweek, width = 24, 
                                            FUN = "quantile", p = 0.95, na.rm = T) %>% 
                   append(rep(NA, 23), .),
-                cumsd_log_vst_wday24 = visitors %>% log1p %>% roll_sdr(n = 24, na.rm = T), 
-                cumcnt_vst_wday24 = is.na(visitors) %>% not %>% 
+                cumsd_log_vst_wday24 = visitors_lastweek %>% log1p %>% roll_sdr(n = 24, na.rm = T), 
+                cumcnt_vst_wday24 = is.na(visitors_lastweek) %>% not %>% 
                   rollapplyr(., width = 24, FUN = "sum", na.rm = T) %>% 
                   append(rep(NA, 23), .)) %>% 
   dplyr::ungroup() %>% 
@@ -191,7 +238,7 @@ df.air_vst <-
                   ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
                 cumcnt_vst_wday24 = cumcnt_vst_wday24 %>% ifelse(is.na(.), yes = -1, no = .)) %>% 
   dplyr::ungroup() %>% 
-  dplyr::select(-visitors)
+  dplyr::select(-visitors, -visitors_yesterday, -visitors_lastweek)
  
 data.train %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
 data.test %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
