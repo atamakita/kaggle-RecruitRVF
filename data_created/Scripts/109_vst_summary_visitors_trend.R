@@ -1,5 +1,6 @@
 # air_vst関連の特徴量
 # 先月および週別の最大小値、平均値、中央値、サンプル数
+# 最大小値と平均値と中央値はtrendでわってlogをとる
 # 欠損値は先月の値を使用し、先月の値が無い場合は来月の値を使用する
 # 101_....Rの結果が必要
 
@@ -31,8 +32,9 @@ lst.data <- lst.path %>%
 temp <- list(train = "./101_train.csv", test = "./101_test.csv") %>% 
   purrr::map(~ readr::read_csv(file = paste0(.x)))
 
-df.holidays <- readr::read_csv(file = "./001_date_info_revised.csv", locale = readr::locale(encoding = "UTF-8"))
-
+# 803の結果
+df.803 <- list(train = "./803_train.csv", test = "./803_test.csv") %>% 
+  purrr::map(~ readr::read_csv(file = paste0(.x)))
 
 # 特徴量作り --------------------------------------------------------------------
 # trainとtestに分ける
@@ -70,36 +72,7 @@ df.master_df <- df.term_ids %>%
                 visitors_lastweek  = visitors %>% dplyr::lag(n = 7)) %>% 
   dplyr::ungroup()
 
-df.master_df <- df.holidays %>% 
-  dplyr::select(calendar_date, holiday) %>% 
-  dplyr::left_join(df.master_df, ., by = c("visit_date" = "calendar_date"))
-
 ## visitors関連
-# 休日, 休前日のidごとの平均値, 中央値, 件数, 25%tile, 75%tile
-df.air_vst <- 
-  df.master_df %>% 
-  tidyr::drop_na(holiday) %>% 
-  dplyr::group_by(air_store_id, holiday) %>% 
-  dplyr::mutate(mean_vst_holiday = mean(visitors, na.rm = T), 
-                med_vst_holiday = median(visitors, na.rm = T),
-                p05_vst_holiday = quantile(visitors, 0.05, na.rm = T),
-                p95_vst_holiday = quantile(visitors, 0.95, na.rm = T)) %>%
-  dplyr::ungroup() %>% 
-  dplyr::group_by(air_store_id) %>% 
-  dplyr::mutate(mean_vst_holiday = mean_vst_holiday %>% 
-                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
-                med_vst_holiday = med_vst_holiday %>% 
-                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
-                p05_vst_holiday = p05_vst_holiday %>% 
-                  ifelse(is.na(.), yes = median(., na.rm = T), no = .), 
-                p95_vst_holiday = p95_vst_holiday %>% 
-                  ifelse(is.na(.), yes = median(., na.rm = T), no = .)) %>% 
-  dplyr::ungroup() %>% 
-  dplyr::select(-visitors, -visitors_yesterday, -visitors_lastweek, -holiday)
-
-data.train %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
-data.test %<>% dplyr::left_join(., df.air_vst, by = c("air_store_id", "visit_date"))
-
 # 過去365日間の平均値, 中央値, 件数, 25%tile, 75%tile, 標準偏差(log1p %>% sd)
 df.air_vst <- 
   df.master_df %>% 
@@ -273,6 +246,56 @@ data.train %<>% dplyr::select(-wday)
 data.test %<>% dplyr::select(-wday)
 
 
+# trendをマージして統計値をtrendで割る
+translate_visitors2 <- function(x, f.trend) {
+  ret <- log((1 + x) / f.trend)
+  return(ret)
+}
+
+data.train %<>% 
+  dplyr::left_join(., df.803[["train"]], by = c("air_store_id", "visit_date")) %>% 
+  dplyr::mutate(cmean_logtr_vst_365 = translate_visitors2(cummean_vst_365, trend), 
+                cmed_logtr_vst_365 =  translate_visitors2(cummed_vst_365, trend), 
+                cp05_logtr_vst_365 =  translate_visitors2(cump05_vst_365, trend), 
+                cp95_logtr_vst_365 =  translate_visitors2(cump95_vst_365, trend), 
+                cmean_logtr_vst_60 = translate_visitors2(cummean_vst_60, trend), 
+                cmed_logtr_vst_60 =  translate_visitors2(cummed_vst_60, trend), 
+                cp05_logtr_vst_60 =  translate_visitors2(cump05_vst_60, trend), 
+                cp95_logtr_vst_60 =  translate_visitors2(cump95_vst_60, trend), 
+                cmean_logtr_vst_wday24 = translate_visitors2(cummean_vst_wday24, trend), 
+                cmed_logtr_vst_wday24 =  translate_visitors2(cummed_vst_wday24, trend), 
+                cp05_logtr_vst_wday24 =  translate_visitors2(cump05_vst_wday24, trend), 
+                cp95_logtr_vst_wday24 =  translate_visitors2(cump95_vst_wday24, trend), 
+                cmean_logtr_vst_wday12 = translate_visitors2(cummean_vst_wday12, trend), 
+                cmed_logtr_vst_wday12 =  translate_visitors2(cummed_vst_wday12, trend)) %>% 
+  dplyr::select(-cummean_vst_365, -cummed_vst_365, -cump05_vst_365, -cump95_vst_365, 
+                -cummean_vst_60, -cummed_vst_60, -cump05_vst_60, -cump95_vst_60, 
+                -cummean_vst_wday24, -cummed_vst_wday24, -cump05_vst_wday24, -cump95_vst_wday24, 
+                -cummean_vst_wday12, -cummed_vst_wday12, 
+                -trend, -trend_log)
+
+data.test %<>% 
+  dplyr::left_join(., df.803[["test"]], by = c("air_store_id", "visit_date")) %>% 
+  dplyr::mutate(cmean_logtr_vst_365 = translate_visitors2(cummean_vst_365, trend), 
+                cmed_logtr_vst_365 =  translate_visitors2(cummed_vst_365, trend), 
+                cp05_logtr_vst_365 =  translate_visitors2(cump05_vst_365, trend), 
+                cp95_logtr_vst_365 =  translate_visitors2(cump95_vst_365, trend), 
+                cmean_logtr_vst_60 = translate_visitors2(cummean_vst_60, trend), 
+                cmed_logtr_vst_60 =  translate_visitors2(cummed_vst_60, trend), 
+                cp05_logtr_vst_60 =  translate_visitors2(cump05_vst_60, trend), 
+                cp95_logtr_vst_60 =  translate_visitors2(cump95_vst_60, trend), 
+                cmean_logtr_vst_wday24 = translate_visitors2(cummean_vst_wday24, trend), 
+                cmed_logtr_vst_wday24 =  translate_visitors2(cummed_vst_wday24, trend), 
+                cp05_logtr_vst_wday24 =  translate_visitors2(cump05_vst_wday24, trend), 
+                cp95_logtr_vst_wday24 =  translate_visitors2(cump95_vst_wday24, trend), 
+                cmean_logtr_vst_wday12 = translate_visitors2(cummean_vst_wday12, trend), 
+                cmed_logtr_vst_wday12 =  translate_visitors2(cummed_vst_wday12, trend)) %>% 
+  dplyr::select(-cummean_vst_365, -cummed_vst_365, -cump05_vst_365, -cump95_vst_365, 
+                -cummean_vst_60, -cummed_vst_60, -cump05_vst_60, -cump95_vst_60, 
+                -cummean_vst_wday24, -cummed_vst_wday24, -cump05_vst_wday24, -cump95_vst_wday24, 
+                -cummean_vst_wday12, -cummed_vst_wday12, 
+                -trend, -trend_log)
+
 # 出力 --------------------------------------------------------------------
 # サンプル数が変化していないか
 f1 <- nrow(data.train) - 252108
@@ -286,6 +309,6 @@ if (f1 != 0 | f2 != 0) {
 } else if (f4 != 0) {
   stop("detect NA in train data") 
 } else {
-  write.table(data.train, file = "./105_train.csv", sep = ",", na = "", row.names = F)
-  write.table(data.test, file = "./105_test.csv", sep = ",", na = "", row.names = F)
+  write.table(data.train, file = "./109_train.csv", sep = ",", na = "", row.names = F)
+  write.table(data.test, file = "./109_test.csv", sep = ",", na = "", row.names = F)
 }
